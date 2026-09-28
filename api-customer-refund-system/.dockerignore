@@ -1,0 +1,12 @@
+.venv
+.git
+.pytest_cache
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+tests
+# README.md is intentionally NOT excluded here - uv_build (this project's
+# build backend) requires it to be present to install the package at all,
+# since pyproject.toml declares it as the `readme` field.
