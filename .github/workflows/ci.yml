@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (lint + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api-customer-refund-system
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: customer-refund-system
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U user -d customer-refund-system"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://user:password@localhost:5432/customer-refund-system
+      JWT_SECRET_KEY: ci-only-secret-not-used-anywhere-real
+      ANTHROPIC_API_KEY: sk-ant-not-a-real-key-ci-never-calls-anthropic
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Lint
+        run: uv run ruff check src tests
+
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+
+      - name: Run tests
+        # tests/conftest.py creates the customer-refund-system-test database
+        # itself on import if it doesn't exist yet - no separate step needed.
+        run: uv run pytest -q
+
+  frontend:
+    name: Frontend (lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-customer-refund-system
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web-customer-refund-system/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build
+        # Route handlers reference process.env at request time, not build
+        # time, so placeholder values are fine here - nothing in this build
+        # actually calls the backend or Anthropic.
+        env:
+          BACKEND_API_URL: http://localhost:8000
+          BACKEND_API_KEY: ci-placeholder
+        run: npm run build

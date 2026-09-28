@@ -1,0 +1,75 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: customer-refund-system
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d customer-refund-system"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./api-customer-refund-system
+    env_file: ./api-customer-refund-system/.env
+    environment:
+      # Overrides the value in .env: inside the compose network the database
+      # is reachable at the service name "db", not 127.0.0.1.
+      DATABASE_URL: postgresql+psycopg://user:password@db:5432/customer-refund-system
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/v1/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Runs once, populates the mock CRM data and demo policy, then exits.
+  # Waits for the backend to report healthy so its migrations have already
+  # applied - this service only seeds, it never runs migrations itself.
+  seed:
+    build: ./api-customer-refund-system
+    env_file: ./api-customer-refund-system/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://user:password@db:5432/customer-refund-system
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["uv", "run", "python", "-m", "api_customer_refund_system.seed.seed_data"]
+    restart: "no"
+
+  frontend:
+    build:
+      context: ./web-customer-refund-system
+      # NEXT_PUBLIC_* values get compiled into the client JS bundle at build
+      # time, so they have to be passed here as build args - setting them
+      # under environment/env_file below only affects the running container,
+      # which is too late for these two. Both are public, non-secret display
+      # values (not credentials), so hardcoding them here is fine; change
+      # them here (and in .env.local, for `next dev`) to rebrand.
+      args:
+        NEXT_PUBLIC_APP_NAME: "Northwind Outfitters Support"
+        NEXT_PUBLIC_BACKEND_DOCS_URL: "http://localhost:8000/docs"
+    env_file: ./web-customer-refund-system/.env.local
+    environment:
+      # Overrides the value in .env.local: inside the compose network the
+      # backend is reachable at the service name "backend", not localhost.
+      BACKEND_API_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  db_data:
